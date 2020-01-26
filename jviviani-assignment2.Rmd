@@ -1,0 +1,144 @@
+---
+title: "GDAT - 515: Assignment 2"
+author: "John Viviani"
+date: "1/25/2020"
+output: 
+  md_document:
+    variant: gfm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+c("dplyr",
+  "tidyverse",
+  "ggthemes",
+  "ggimage", 
+  "RCurl",
+  "gridExtra"
+  ) -> package_names  
+for(package_name in package_names) {
+  if(!is.element(package_name, installed.packages()[,1])) {
+     install.packages(package_name,
+                      repos = "http://cran.mtu.edu/")
+  }
+  library(package_name, character.only=TRUE,
+          quietly=TRUE,verbose=FALSE)
+}
+rm(list=c("package_name", "package_names")) # clean up the environment
+
+options(scipen = 999)
+```
+
+
+## Who Was the Most Improved NFL Team 4 weeks Into the 2019 NFL Season?
+
+The dataset I acquired can be found here: https://github.com/fivethirtyeight/data/tree/master/nfl-elo
+
+It comes from a github repository featuring datasets from fivethirtyeight. The dataset I intend to use contains NFL game-by-game Elo ratings dating all the way back to 1920. I'm aiming to take the difference between each team's Elo rating after their week 4 games and before their week 1 games. This will give a measure of how much each team improved after the first quarter of the season compared to their initial week 1 rating.
+
+The Elo ratings I'm using are based on each team's performance last season. An average team has an Elo rating of 1500. If a team wins, their Elo rating will always improve, and if they lose, their Elo eating will always decline. Various factors are taken into account when assessing how much a team's Elo rating will change (e.g. strength of schedule), and it's meant to be used as a metric to compare each of the team's to one another.
+
+```{r}
+# Desktop
+read.csv("C:/Users/JVivs/Documents/COLLEGE/GRAD SCHOOL/GDAT515/nfl_elo.csv") -> nfl
+
+# Filtering for weeks 1 through 4 in the 2019 NFL season
+nfl[16275:16337,] -> nflteam_4_weeks
+
+str(nflteam_4_weeks)
+
+# Filtering for the variables of interest
+# Data is organized by game; therefore, collecting all home team stats in one data frame and all away team stats into another data frame to later combine
+nflteam_4_weeks %>%
+  select(., "date", "team1", "elo1_pre", "elo1_post") -> df4weeks_team1
+
+nflteam_4_weeks %>%
+  select(., "date", "team2", "elo2_pre", "elo2_post") -> df4weeks_team2
+
+# Giving both data frames a common column name to bind later
+df4weeks_team1$team <- df4weeks_team1$team1
+df4weeks_team2$team <- df4weeks_team2$team2
+
+# Binding the two data frames
+newdf_4weeks_team <- bind_rows(df4weeks_team1, df4weeks_team2)
+
+newdf_4weeks_team %>%
+  select(., 1,3,4,5,7,8) -> newdf_4weeks_team
+
+# Same thing for pre and post qb values
+newdf_4weeks_team$elo1_pre[is.na(newdf_4weeks_team$elo1_pre)] <- newdf_4weeks_team$elo2_pre[is.na(newdf_4weeks_team$elo1_pre)]
+
+newdf_4weeks_team$elo1_post[is.na(newdf_4weeks_team$elo1_post)] <- newdf_4weeks_team$elo2_post[is.na(newdf_4weeks_team$elo1_post)]
+
+# Arranging by date (Start from week 1 to week 4)
+newdf_4weeks_team %>%
+  arrange(., date) %>% 
+  select(., 1:4) %>%
+  rename(., team_code = team, elo_pre = elo1_pre, elo_post = elo1_post) -> newerdf_4weeks_team
+
+# Creating a difference column (elo after week 4 - elo before week 1)
+
+# Week 1 data
+newerdf_4weeks_team %>%
+  slice(., 1:32) %>%
+  arrange(., team_code) -> week1_team
+
+# Week 4 data (Including week 3 data for SF and NYJ since they had bye weeks in week 4)
+newerdf_4weeks_team %>%
+  slice(., 78, 82, 97:126) %>%
+  arrange(., team_code) -> week4_team
+
+week4_team$elo_post - week1_team$elo_pre -> week4_team$diff_value
+```
+
+I found a dataset that features each of the 32 NFL teams' logos at https://statsbylopez.netlify.com/post/nfl-team-logos-using-ggimage/
+
+To make this bar graph visually appealing, I wanted to add each team's logo to their respective performance measure. In order to do this, I need to merge the dataset created above with this dataset on a common column name (in this case, team_code). Once merged, I can use ggimage to load in the team's logo through the use of the url column in the provided dataset which leads to a PNG of their respective logo.
+
+
+```{r}
+# NFL Team Logos
+url.logo <- getURL("https://raw.githubusercontent.com/statsbylopez/BlogPosts/master/nfl_teamlogos.csv")
+df.logos <- read.csv(text = url.logo)
+
+str(df.logos)
+
+# Converting logo column to character
+as.character(df.logos$team_code) -> df.logos$team_code
+
+# Renaming two team abbreviations to match those in newerdf_4weeks
+df.logos$team_code[18] <- c("LAR")
+df.logos$team_code[32] <- c("WSH")
+
+# Merging the two data frames together by the team_code column so logos can load in from URL provided in df.logos
+merge(week4_team, df.logos, by = "team_code") -> finaldf_team
+```
+
+```{r}
+# Arranging by highest to lowest
+finaldf_team %>%
+  arrange(., desc(diff_value)) -> finaldf_team
+
+# Plotting the elo differences
+ggplot(finaldf_team, aes(x = reorder(team_code, -diff_value), y = diff_value)) + 
+  geom_image(aes(image = url), size = 0.04) +
+  geom_bar(aes(fill = diff_value < 0), stat = "identity", alpha = 0.5) + 
+  scale_fill_manual(guide = FALSE, breaks = c(TRUE, FALSE), values = c("green3", "red3")) + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  xlab("NFL Team") + 
+  ylab("Elo Rating") + 
+  ggtitle("NFL Team Improvement According to Elo Rating", subtitle = "Through 4 Weeks of the 2019 NFL Season") -> diff_plot_team
+
+diff_plot_team
+
+```
+
+This visualization allows us to see which teams improved from their initial elo ratings (colored green), and which teams regressed (colored red). I arranged it in a descending order so that we can read the graph left to right. This also allows us to quickly answer the question posed as to which team improved the most through 4 weeks of the 2019 NFL Season (San Francisco 49ers). It's important to note that the 49ers and Jets did not play games in week 4 due to having a bye week; so I included their post-week 3 Elo rating into the dataset, and substracted their initial week 1 ratings from that. 
+
+By looking at this graph, we can also see which team regressed the most (Miami Dolphins), so I think it's beneficial having a bar graph in this order as it allows us to glean on other insights aside from the initial question.
+
+
